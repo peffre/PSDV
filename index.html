@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Point Source — Compression / Rarefaction Field</title>
+<style>
+  :root{
+    --putty:#CFC6B4; --dim:#8C8578; --amber:#E8A33D;
+    --panel:#1E1C1A; --panelhi:#2A2724; --line:#3A362F; --bg:#141311;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--bg); color:var(--putty); min-height:100vh; padding:16px;
+    font-family:'Helvetica Neue',Helvetica,Arial,sans-serif; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:460px;margin:0 auto}
+  .lab{text-transform:uppercase;letter-spacing:.18em;font-size:9px;color:var(--dim)}
+  .mono{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;font-size:10px;color:var(--amber)}
+  .row{display:flex;gap:16px}
+  .between{display:flex;justify-content:space-between;align-items:baseline}
+
+  header{display:flex;align-items:flex-end;justify-content:space-between;
+    border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:12px}
+  h1{margin:0;text-transform:uppercase;letter-spacing:.18em;font-size:15px;font-weight:700;color:var(--putty)}
+  header .sub{text-transform:uppercase;letter-spacing:.18em;font-size:8.5px;color:var(--dim);margin-top:3px}
+
+  button{
+    font-family:inherit;text-transform:uppercase;letter-spacing:.18em;font-size:8.5px;
+    background:var(--panel);color:var(--putty);border:1px solid var(--line);
+    border-radius:2px;padding:5px 10px;cursor:pointer;
+  }
+  button:hover{background:var(--panelhi)}
+  button.on{background:var(--amber);color:var(--bg);border-color:var(--amber)}
+  button:disabled{opacity:.4;cursor:default}
+  button:focus-visible,input:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+
+  .fieldbox{position:relative;border:1px solid var(--line);border-radius:2px;overflow:hidden;line-height:0}
+  #field{display:block;width:100%;aspect-ratio:1/1}
+  .legend{position:absolute;left:8px;bottom:6px;display:flex;gap:12px;align-items:center;
+    text-transform:uppercase;letter-spacing:.18em;font-size:8px;color:rgba(207,198,180,.75);line-height:1}
+  .legend span{display:flex;align-items:center;gap:5px}
+  .swatch{width:10px;height:10px;border-radius:50%;display:inline-block}
+
+  #bars{display:flex;gap:1px;height:128px;background:var(--panel);border:1px solid var(--line);
+    border-radius:2px;padding:2px;touch-action:none;user-select:none;cursor:crosshair}
+  .bar{flex:1;display:flex;flex-direction:column;justify-content:flex-end;position:relative}
+  .fill{background:var(--amber)}
+  .bar.sel .fill{background:#F2EADA}
+  .idx{position:absolute;left:0;right:0;bottom:0;text-align:center;pointer-events:none;
+    font-family:ui-monospace,Menlo,monospace;font-size:7px;color:var(--dim)}
+
+  input[type=range]{width:100%;accent-color:var(--amber);margin:0}
+  .ctl{flex:1;min-width:0}
+  #period{display:block;width:100%;height:34px;background:var(--panel);border:1px solid var(--line);border-radius:2px}
+  .presets{display:flex;flex-wrap:wrap;gap:6px;margin-top:16px}
+  .sect{margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}
+  .note{margin-top:16px;font-size:11px;line-height:1.6;color:var(--dim)}
+  .hint{margin-top:4px}
+  [hidden]{display:none !important}
+
+  /* ---- desktop: canvas fills the window, controls move to a side rail ---- */
+  @media (min-width:900px){
+    body{padding:20px 24px;height:100vh;overflow:hidden}
+    .wrap{
+      max-width:none;height:100%;
+      display:grid;grid-template-columns:minmax(0,1fr) 380px;
+      grid-template-rows:auto minmax(0,1fr);
+      column-gap:28px;align-items:start;
+    }
+    header{grid-column:1/-1;margin-bottom:16px}
+    .stage{
+      grid-column:1;grid-row:2;height:100%;min-height:0;
+      display:flex;align-items:center;justify-content:center;
+    }
+    .stage .fieldbox{height:100%;aspect-ratio:1/1;max-width:100%}
+    #field{height:100%;width:100%}
+    .legend{left:12px;bottom:10px;font-size:9px}
+    .panel{
+      grid-column:2;grid-row:2;height:100%;min-height:0;
+      overflow-y:auto;padding-right:10px;padding-bottom:24px;
+      scrollbar-color:var(--line) transparent;
+    }
+    .panel .firstblock{margin-top:0 !important}
+    #bars{height:150px}
+    .note{margin-bottom:0}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <h1>Point Source</h1>
+      <div class="sub">Compression / Rarefaction Field</div>
+    </div>
+    <button id="run">Freeze</button>
+  </header>
+
+  <div class="stage">
+    <div class="fieldbox">
+      <canvas id="field"></canvas>
+      <div class="legend">
+        <span><i class="swatch" style="background:#D64A26"></i>Compression</span>
+        <span><i class="swatch" style="background:#226CC4"></i>Rarefaction</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+
+  <div style="margin-top:16px" class="firstblock">
+    <div class="between" style="margin-bottom:6px">
+      <span class="lab">Harmonic Partials</span>
+      <span class="mono" id="readSel">01 · 1.00 · φ 0°</span>
+    </div>
+    <div id="bars"></div>
+    <div class="lab hint">Drag across the bars to draw the spectrum</div>
+  </div>
+
+  <div class="row" style="margin-top:16px;align-items:flex-end">
+    <div class="ctl">
+      <div class="between" style="margin-bottom:4px">
+        <span class="lab" id="phaseLabel">Phase · partial 1</span>
+        <span class="mono" id="phaseRead">0°</span>
+      </div>
+      <input type="range" id="phase" min="0" max="1" step="0.005" value="0">
+    </div>
+    <div style="width:112px">
+      <div class="lab" style="margin-bottom:4px">Period</div>
+      <canvas id="period"></canvas>
+    </div>
+  </div>
+
+  <div class="presets" id="presets"></div>
+
+  <div class="sect">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="lab" style="flex:1">Sources</span>
+      <button id="n1" class="on">One</button>
+      <button id="n2">Two</button>
+      <button id="n4">Four</button>
+    </div>
+
+    <div id="sepCtl" hidden style="margin-top:12px">
+      <div class="between" style="margin-bottom:4px">
+        <span class="lab" id="sepLabel">Separation</span><span class="mono" id="sepRead">1.00 λ</span>
+      </div>
+      <input type="range" id="sep" min="0.1" max="4" step="0.05" value="1">
+    </div>
+
+    <div class="row" id="phaseCtl" hidden style="margin-top:12px">
+      <div class="ctl">
+        <div class="between" style="margin-bottom:4px">
+          <span class="lab">B offset</span><span class="mono" id="pbRead">0°</span>
+        </div>
+        <input type="range" id="pb" min="0" max="1" step="0.005" value="0">
+      </div>
+      <div class="ctl" id="cWrap" hidden>
+        <div class="between" style="margin-bottom:4px">
+          <span class="lab">C offset</span><span class="mono" id="pcRead">0°</span>
+        </div>
+        <input type="range" id="pc" min="0" max="1" step="0.005" value="0">
+      </div>
+      <div class="ctl" id="dWrap" hidden>
+        <div class="between" style="margin-bottom:4px">
+          <span class="lab">D offset</span><span class="mono" id="pdRead">0°</span>
+        </div>
+        <input type="range" id="pd" min="0" max="1" step="0.005" value="0">
+      </div>
+    </div>
+
+    <div id="quadPresets" hidden style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px"></div>
+  </div>
+
+  <div class="row" style="margin-top:16px">
+    <div class="ctl">
+      <div class="between" style="margin-bottom:4px">
+        <span class="lab">Wavelengths</span><span class="mono" id="wlRead">3.2</span>
+      </div>
+      <input type="range" id="wl" min="1" max="6" step="0.1" value="3.2">
+    </div>
+    <div class="ctl">
+      <div class="between" style="margin-bottom:4px">
+        <span class="lab">Falloff 1/rᵃ</span><span class="mono" id="foRead">a 0.55</span>
+      </div>
+      <input type="range" id="fo" min="0" max="2" step="0.05" value="0.55">
+    </div>
+  </div>
+
+  <button id="parts" style="width:100%;padding:9px;margin-top:12px">Particle displacement Off</button>
+
+  <p class="note">
+    Each pixel reads the source waveform at a delay of r/c, so the rings are the waveform
+    itself drawn outward and reversed in time. Two sources sit on a horizontal axis; four
+    sit on the corners of a square, with separation measured as the side length. The
+    radiating dark spokes are comb nulls, and every partial nulls at a different angle.
+    Set falloff to 2.0 for physical inverse-square; lower values keep the outer rings readable.
+  </p>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  const NP = 16, LUT = 2048, MASK = LUT - 1, PAL = 512;
+  const GN = 2048, RMAX = 6, GS = (GN - 1) / RMAX;   // gain lookup over normalized radius
+
+  const PRESETS = {
+    Sine:     n => n === 1 ? 1 : 0,
+    Saw:      n => 1 / n,
+    Square:   n => n % 2 ? 1 / n : 0,
+    Triangle: n => n % 2 ? 1 / (n * n) : 0,
+    Pulse:    () => 1,
+    Odd:      n => n % 2 ? 1 / Math.sqrt(n) : 0
+  };
+
+  /* four-source phase presets: [B, C, D] in turns */
+  const QUAD = {
+    "In phase":   [0, 0, 0],
+    "Alternating":[0.5, 0.5, 0],
+    "Rotating":   [0.25, 0.75, 0.5],
+    "Pair flip":  [0, 0.5, 0.5]
+  };
+
+  const S = {
+    amps:   Array.from({length: NP}, (_, i) => PRESETS.Saw(i + 1)),
+    phases: new Array(NP).fill(0),
+    sel: 0, wavelengths: 3.2, falloff: 0.55,
+    particles: false, running: true,
+    n: 1, sepWL: 1,
+    off: [0, 0, 0, 0]      // per-source phase offset in turns; A is always 0
+  };
+
+  /* ---------- colormap ---------- */
+  const palette = (function(){
+    const p = new Uint8Array(PAL * 3);
+    const amb = [26,24,22], warmCore = [214,74,38], warmHot = [255,232,186],
+          coolCore = [34,108,196], coolHot = [186,236,255];
+    const mix = (a,b,t) => [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
+    for (let i = 0; i < PAL; i++){
+      const v = (i / (PAL - 1)) * 2 - 1;
+      const a = Math.min(1, Math.abs(v));
+      const core = v >= 0 ? warmCore : coolCore;
+      const hot  = v >= 0 ? warmHot  : coolHot;
+      const c = a < 0.62 ? mix(amb, core, a / 0.62) : mix(core, hot, (a - 0.62) / 0.38);
+      p[i*3] = c[0]; p[i*3+1] = c[1]; p[i*3+2] = c[2];
+    }
+    return p;
+  })();
+
+  /* ---------- source waveform + its integral (displacement) ---------- */
+  let wave = new Float32Array(LUT), disp = new Float32Array(LUT);
+
+  function rebuild(){
+    const w = new Float32Array(LUT);
+    for (let n = 0; n < NP; n++){
+      const a = S.amps[n];
+      if (a <= 0.0005) continue;
+      const k = ((n + 1) * 2 * Math.PI) / LUT, ph = S.phases[n] * 2 * Math.PI;
+      for (let i = 0; i < LUT; i++) w[i] += a * Math.sin(k * i + ph);
+    }
+    let peak = 1e-6;
+    for (let i = 0; i < LUT; i++) peak = Math.max(peak, Math.abs(w[i]));
+    for (let i = 0; i < LUT; i++) w[i] /= peak;
+
+    const d = new Float32Array(LUT);
+    let acc = 0, mean = 0, dp = 1e-6;
+    for (let i = 0; i < LUT; i++){ acc += w[i]; d[i] = acc; mean += acc; }
+    mean /= LUT;
+    for (let i = 0; i < LUT; i++){ d[i] -= mean; dp = Math.max(dp, Math.abs(d[i])); }
+    for (let i = 0; i < LUT; i++) d[i] /= dp;
+
+    wave = w; disp = d;
+    drawPeriod(); drawBars();
+  }
+
+  /* ---------- 1/rᵃ gain, precomputed against normalized radius ---------- */
+  let gLUT = new Float32Array(GN), gainKey = '';
+  function gains(){
+    const key = S.falloff.toFixed(3);
+    if (key === gainKey) return;
+    gainKey = key;
+    const r0 = 0.045;
+    for (let i = 0; i < GN; i++){
+      const r = i / GS;
+      gLUT[i] = Math.pow(r0 / Math.max(r, r0), S.falloff);
+    }
+  }
+
+  /* ---------- source layout ---------- */
+  /* normalized coords, 1.0 = half the frame width. A is the reference source. */
+  function layout(){
+    const half = S.sepWL / (2 * S.wavelengths);   // half the square's side, in frame units
+    if (S.n === 1) return [{x:0, y:0, tag:'A'}];
+    if (S.n === 2) return [{x:-half, y:0, tag:'A'}, {x:half, y:0, tag:'B'}];
+    return [
+      {x:-half, y:-half, tag:'A'}, {x: half, y:-half, tag:'B'},
+      {x:-half, y: half, tag:'C'}, {x: half, y: half, tag:'D'}
+    ];
+  }
+
+  /* ---------- field renderer ---------- */
+  const cv = document.getElementById('field');
+  const ctx = cv.getContext('2d', {alpha:false});
+  let W = 0, H = 0, img = null, buf = null, dist = [], geoKey = '', pos = [];
+
+  /* Render resolution follows the element, but the ceiling drops as sources are
+     added — four sources means four delayed reads per pixel. */
+  const MAXPX = {1: 1000, 2: 820, 4: 660};
+
+  function size(){
+    const rect = cv.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    const side = Math.min(rect.width, rect.height || rect.width);
+    const w = Math.max(120, Math.min(Math.round(side * dpr), MAXPX[S.n] || 660));
+    if (w === W) return;
+    W = H = w; cv.width = W; cv.height = H;
+    img = ctx.createImageData(W, H); buf = img.data;
+    for (let i = 3; i < buf.length; i += 4) buf[i] = 255;
+    geoKey = '';
+  }
+
+  /* one distance field per source, normalized so 1.0 = half the frame width */
+  function geometry(){
+    const key = W + '|' + S.n + '|' + S.sepWL.toFixed(3) + '|' + S.wavelengths.toFixed(3);
+    if (key === geoKey) return;
+    geoKey = key;
+    pos = layout();
+    const R = W / 2, cx = W / 2, cy = H / 2;
+    dist = pos.map(() => new Float32Array(W * H));
+    for (let s = 0; s < pos.length; s++){
+      const sx = cx + pos[s].x * R, sy = cy + pos[s].y * R, out = dist[s];
+      for (let y = 0; y < H; y++){
+        const dy = y - sy;
+        for (let x = 0; x < W; x++) out[y * W + x] = Math.hypot(x - sx, dy) / R;
+      }
+    }
+  }
+
+  let t = 0, last = performance.now();
+
+  function frame(now){
+    requestAnimationFrame(frame);
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    size(); geometry(); gains();
+    if (S.running) t = (t + dt * 0.55) % 1;
+
+    const cyc  = S.wavelengths;
+    const perR = cyc * LUT;                      // LUT samples per unit radius
+    const h    = ((perR / (W / 2)) * 0.5) | 0;   // box filter ≈ one pixel of radius
+    const N    = dist.length;
+    const g    = N === 1 ? 1 : 0.82 / Math.sqrt(N);
+
+    // read time for each source: p = s(t − r/c − offset)
+    const tS = [];
+    for (let s = 0; s < N; s++) tS.push(t * LUT - S.off[s] * LUT);
+
+    const px0 = dist[0].length;
+    for (let i = 0, px = 0; i < px0; i++, px += 4){
+      let v = 0;
+      for (let s = 0; s < N; s++){
+        const r = dist[s][i];
+        let idx = tS[s] - r * perR;
+        idx -= Math.floor(idx / LUT) * LUT;
+        const i0 = idx | 0;
+        const sm = (wave[i0] + wave[(i0 + h) & MASK] + wave[(i0 - h + LUT) & MASK]) / 3;
+        let gi = (r * GS) | 0; if (gi >= GN) gi = GN - 1;
+        v += sm * gLUT[gi];
+      }
+      v *= g;
+      if (v > 1) v = 1; else if (v < -1) v = -1;
+      const c = (((v + 1) * 0.5 * (PAL - 1)) | 0) * 3;
+      buf[px] = palette[c]; buf[px+1] = palette[c+1]; buf[px+2] = palette[c+2];
+    }
+    ctx.putImageData(img, 0, 0);
+
+    const cx = W / 2, cy = H / 2, R = W / 2;
+
+    /* displacement overlay — dots bunch where pressure peaks (single source) */
+    if (S.particles && N === 1){
+      ctx.fillStyle = 'rgba(230,226,216,0.62)';
+      const rings = 74, spokes = 56, amp = R / (cyc * 7);
+      for (let s = 0; s < spokes; s++){
+        const th = (s / spokes) * Math.PI * 2, ca = Math.cos(th), sa = Math.sin(th);
+        for (let k = 3; k < rings; k++){
+          const rr = (k / rings) * R, rn = rr / R;
+          let idx = t * LUT - rn * perR;
+          idx -= Math.floor(idx / LUT) * LUT;
+          let gi = (rn * GS) | 0; if (gi >= GN) gi = GN - 1;
+          const dd = disp[idx | 0] * amp * gLUT[gi];
+          ctx.fillRect(cx + ca * (rr + dd) - 0.6, cy + sa * (rr + dd) - 0.6, 1.3, 1.3);
+        }
+      }
+    }
+
+    /* the sources themselves */
+    const rad = Math.max(2.5, W * 0.011);
+    ctx.fillStyle = '#F2EADA';
+    ctx.font = (W * 0.028) + 'px ui-monospace, Menlo, monospace';
+    ctx.textBaseline = 'middle';
+    for (const p of pos){
+      const sx = cx + p.x * R, sy = cy + p.y * R;
+      ctx.beginPath(); ctx.arc(sx, sy, rad, 0, 7); ctx.fill();
+      if (N > 1) ctx.fillText(p.tag, sx + rad * 1.8, sy);
+    }
+  }
+
+  /* ---------- one-period trace ---------- */
+  const pc = document.getElementById('period');
+  function drawPeriod(){
+    const rect = pc.getBoundingClientRect();
+    if (!rect.width) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    pc.width = rect.width * dpr; pc.height = rect.height * dpr;
+    const c = pc.getContext('2d'), w = pc.width, h = pc.height;
+    c.clearRect(0, 0, w, h);
+    c.strokeStyle = '#3A362F'; c.lineWidth = dpr;
+    c.beginPath(); c.moveTo(0, h/2); c.lineTo(w, h/2); c.stroke();
+    c.strokeStyle = '#E8A33D'; c.lineWidth = 1.6 * dpr;
+    c.beginPath();
+    for (let x = 0; x < w; x++){
+      const y = h/2 - wave[((x / w) * LUT) | 0] * (h/2 - 3 * dpr);
+      x ? c.lineTo(x, y) : c.moveTo(x, y);
+    }
+    c.stroke();
+  }
+
+  /* ---------- partial editor ---------- */
+  const barsEl = document.getElementById('bars');
+  const cells = [];
+  for (let i = 0; i < NP; i++){
+    const bar = document.createElement('div'); bar.className = 'bar';
+    const fill = document.createElement('div'); fill.className = 'fill';
+    const idx = document.createElement('div'); idx.className = 'idx'; idx.textContent = i + 1;
+    bar.appendChild(fill); bar.appendChild(idx); barsEl.appendChild(bar);
+    cells.push({bar, fill});
+  }
+
+  function drawBars(){
+    for (let i = 0; i < NP; i++){
+      const a = S.amps[i];
+      cells[i].fill.style.height = (a * 100) + '%';
+      cells[i].fill.style.opacity = i === S.sel ? 1 : (0.55 + a * 0.45);
+      cells[i].bar.classList.toggle('sel', i === S.sel);
+    }
+    document.getElementById('readSel').textContent =
+      String(S.sel + 1).padStart(2, '0') + ' · ' + S.amps[S.sel].toFixed(2) +
+      ' · φ ' + Math.round(S.phases[S.sel] * 360) + '°';
+    document.getElementById('phaseLabel').textContent = 'Phase · partial ' + (S.sel + 1);
+    document.getElementById('phase').value = S.phases[S.sel];
+    document.getElementById('phaseRead').textContent = Math.round(S.phases[S.sel] * 360) + '°';
+  }
+
+  let dragging = false;
+  function paint(e){
+    const r = barsEl.getBoundingClientRect();
+    const i = Math.min(NP - 1, Math.max(0, Math.floor(((e.clientX - r.left) / r.width) * NP)));
+    const v = Math.min(1, Math.max(0, 1 - (e.clientY - r.top) / r.height));
+    S.sel = i; S.amps[i] = v < 0.02 ? 0 : v;
+    rebuild();
+  }
+  barsEl.addEventListener('pointerdown', e => { dragging = true; paint(e); });
+  window.addEventListener('pointermove', e => { if (dragging){ e.preventDefault(); paint(e); } }, {passive:false});
+  window.addEventListener('pointerup', () => dragging = false);
+
+  /* ---------- controls ---------- */
+  const $ = id => document.getElementById(id);
+
+  const presetsEl = $('presets');
+  Object.keys(PRESETS).forEach(name => {
+    const b = document.createElement('button');
+    b.textContent = name;
+    b.onclick = () => {
+      for (let i = 0; i < NP; i++){ S.amps[i] = Math.min(1, PRESETS[name](i + 1)); S.phases[i] = 0; }
+      rebuild();
+    };
+    presetsEl.appendChild(b);
+  });
+  const clr = document.createElement('button');
+  clr.textContent = 'Clear'; clr.style.color = '#8C8578';
+  clr.onclick = () => {
+    for (let i = 0; i < NP; i++){ S.amps[i] = i === 0 ? 1 : 0; S.phases[i] = 0; }
+    rebuild();
+  };
+  presetsEl.appendChild(clr);
+
+  const qEl = $('quadPresets');
+  Object.keys(QUAD).forEach(name => {
+    const b = document.createElement('button');
+    b.textContent = name;
+    b.onclick = () => {
+      const v = QUAD[name];
+      S.off[1] = v[0]; S.off[2] = v[1]; S.off[3] = v[2];
+      syncOffsets();
+    };
+    qEl.appendChild(b);
+  });
+
+  function syncOffsets(){
+    $('pb').value = S.off[1]; $('pbRead').textContent = Math.round(S.off[1] * 360) + '°';
+    $('pc').value = S.off[2]; $('pcRead').textContent = Math.round(S.off[2] * 360) + '°';
+    $('pd').value = S.off[3]; $('pdRead').textContent = Math.round(S.off[3] * 360) + '°';
+  }
+
+  $('phase').addEventListener('input', e => { S.phases[S.sel] = parseFloat(e.target.value); rebuild(); });
+  $('wl').addEventListener('input', e => {
+    S.wavelengths = parseFloat(e.target.value);
+    $('wlRead').textContent = S.wavelengths.toFixed(1);
+  });
+  $('fo').addEventListener('input', e => {
+    S.falloff = parseFloat(e.target.value);
+    $('foRead').textContent = 'a ' + S.falloff.toFixed(2);
+  });
+  $('sep').addEventListener('input', e => {
+    S.sepWL = parseFloat(e.target.value);
+    $('sepRead').textContent = S.sepWL.toFixed(2) + ' λ';
+  });
+  [['pb',1],['pc',2],['pd',3]].forEach(([id, i]) => {
+    $(id).addEventListener('input', e => {
+      S.off[i] = parseFloat(e.target.value);
+      $(id + 'Read').textContent = Math.round(S.off[i] * 360) + '°';
+    });
+  });
+
+  function setN(n){
+    S.n = n;
+    $('n1').classList.toggle('on', n === 1);
+    $('n2').classList.toggle('on', n === 2);
+    $('n4').classList.toggle('on', n === 4);
+    $('sepCtl').hidden   = n === 1;
+    $('phaseCtl').hidden = n === 1;
+    $('cWrap').hidden = n < 4;
+    $('dWrap').hidden = n < 4;
+    $('quadPresets').hidden = n < 4;
+    $('sepLabel').textContent = n === 4 ? 'Separation · square side' : 'Separation';
+    const p = $('parts');
+    p.disabled = n > 1;
+    p.textContent = n > 1 ? 'Particle displacement — single source only'
+                          : 'Particle displacement ' + (S.particles ? 'On' : 'Off');
+    p.classList.toggle('on', S.particles && n === 1);
+  }
+  $('n1').onclick = () => setN(1);
+  $('n2').onclick = () => setN(2);
+  $('n4').onclick = () => setN(4);
+
+  $('parts').onclick = () => {
+    S.particles = !S.particles;
+    $('parts').textContent = 'Particle displacement ' + (S.particles ? 'On' : 'Off');
+    $('parts').classList.toggle('on', S.particles);
+  };
+
+  $('run').onclick = () => {
+    S.running = !S.running;
+    $('run').textContent = S.running ? 'Freeze' : 'Run';
+    $('run').classList.toggle('on', !S.running);
+  };
+
+  window.addEventListener('resize', () => { geoKey = ''; drawPeriod(); });
+
+  rebuild(); setN(1); syncOffsets();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
